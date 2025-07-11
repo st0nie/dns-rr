@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Result;
 use lazy_static::lazy_static;
-use log::{error, info, warn};
+use log::{error, info};
 use simple_dns::{rdata::RData, *};
 use tokio::signal;
 
@@ -48,7 +48,7 @@ async fn query_handler(
     let suffix = &args.suffix;
     let address = &args.address;
 
-    let mut reply = Packet::new_query(id);
+    let mut reply = Packet::new_reply(id);
     if packet.opcode() != OPCODE::StandardQuery {
         socket.send_to(&reply.build_bytes_vec()?, addr).await?;
         return Ok(());
