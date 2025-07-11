@@ -49,6 +49,13 @@ async fn query_handler(
     let address = &args.address;
 
     let mut reply = Packet::new_reply(id);
+    reply.questions.extend(packet.questions.iter().cloned());
+    if packet.has_flags(PacketFlag::RECURSION_DESIRED) {
+        reply.set_flags(PacketFlag::RECURSION_DESIRED);
+    }
+    reply.set_flags(PacketFlag::RECURSION_AVAILABLE);
+    reply.set_flags(PacketFlag::AUTHORITATIVE_ANSWER);
+
     if packet.opcode() != OPCODE::StandardQuery {
         socket.send_to(&reply.build_bytes_vec()?, addr).await?;
         return Ok(());
