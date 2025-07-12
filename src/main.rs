@@ -1,12 +1,14 @@
 use std::{
     net::{Ipv4Addr, SocketAddr},
     sync::{atomic::AtomicUsize, Arc},
+    time::Duration,
 };
 
 use anyhow::Result;
 use lazy_static::lazy_static;
 use log::{error, info};
 use simple_dns::{rdata::RData, *};
+use timedmap::{start_cleaner, TimedMap};
 use tokio::signal;
 
 use clap::Parser;
@@ -37,6 +39,7 @@ async fn query_handler(
     size: usize,
     addr: std::net::SocketAddr,
     args: Arc<Args>,
+    dns_cache: Arc<TimedMap<String, Vec<Ipv4Addr>>>,
 ) -> Result<()> {
     info!("Received {} bytes", size);
     let request = &buf[..size];
@@ -83,18 +86,43 @@ async fn query_handler(
             ));
         }
 
+        const TTL: u32 = 300;
+
         if should_fallback {
-            if let Ok(addrs) = tokio::net::lookup_host(format!("{}:0", qname_string)).await {
-                for addr in addrs {
-                    if let SocketAddr::V4(ipv4_addr) = addr {
-                        reply.answers.push(ResourceRecord::new(
-                            qname.clone(),
-                            CLASS::IN,
-                            300,
-                            RData::A((*ipv4_addr.ip()).into()),
-                        ));
-                    }
+            if let Some(cached_addrs) = dns_cache.get_value(&qname_string) {
+                let expire = cached_addrs.expires();
+                let now = std::time::Instant::now();
+                let remaining = expire.saturating_duration_since(now);
+
+                for ip in cached_addrs.value() {
+                    reply.answers.push(ResourceRecord::new(
+                        qname.clone(),
+                        CLASS::IN,
+                        remaining.as_secs() as u32,
+                        RData::A(ip.into()),
+                    ));
                 }
+                continue;
+            }
+
+            if let Ok(addrs) = tokio::net::lookup_host(format!("{}:0", qname_string)).await {
+                let v4_addrs = addrs
+                    .filter_map(|addr| -> Option<Ipv4Addr> {
+                        if let SocketAddr::V4(addr_v4) = addr {
+                            reply.answers.push(ResourceRecord::new(
+                                qname.clone(),
+                                CLASS::IN,
+                                TTL,
+                                RData::A((*addr_v4.ip()).into()),
+                            ));
+                            Some(*addr_v4.ip())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                dns_cache.insert(qname_string, v4_addrs, Duration::from_secs(TTL as u64));
             }
         }
     }
@@ -114,6 +142,10 @@ async fn main() -> Result<()> {
 
     let args = Arc::new(args);
 
+    let dns_cache = Arc::new(TimedMap::new());
+
+    let _ = start_cleaner(dns_cache.clone(), Duration::from_secs(1));
+
     tokio::spawn(async move {
         let mut buf = [0; 1024];
         loop {
@@ -121,9 +153,10 @@ async fn main() -> Result<()> {
             match socket.recv_from(buf.as_mut()).await {
                 Ok((size, addr)) => {
                     let args = Arc::clone(&args);
+                    let dns_cache = Arc::clone(&dns_cache);
                     tokio::spawn(async move {
                         let args = Arc::clone(&args);
-                        query_handler(socket, &buf, size, addr, args)
+                        query_handler(socket, &buf, size, addr, args, dns_cache)
                             .await
                             .inspect_err(|e| error!("Error handling query: {}", e))
                     });
