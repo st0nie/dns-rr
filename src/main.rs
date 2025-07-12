@@ -1,6 +1,6 @@
 use std::{
     net::{Ipv4Addr, SocketAddr},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
 
@@ -8,7 +8,7 @@ use anyhow::Result;
 use lazy_static::lazy_static;
 use log::{error, info};
 use simple_dns::{rdata::RData, *};
-use timedmap::{start_cleaner, TimedMap};
+use timedmap::{TimedMap, start_cleaner};
 use tokio::signal;
 
 use clap::Parser;
@@ -88,42 +88,46 @@ async fn query_handler(
 
         const TTL: u32 = 300;
 
-        if should_fallback {
-            if let Some(cached_addrs) = dns_cache.get_value(&qname_string) {
-                let expire = cached_addrs.expires();
-                let now = std::time::Instant::now();
-                let remaining = expire.saturating_duration_since(now);
+        if should_fallback == false {
+            continue;
+        }
 
-                for ip in cached_addrs.value() {
-                    reply.answers.push(ResourceRecord::new(
-                        qname.clone(),
-                        CLASS::IN,
-                        remaining.as_secs() as u32,
-                        RData::A(ip.into()),
-                    ));
-                }
-                continue;
+        // 有缓存就用缓存
+        if let Some(cached_addrs) = dns_cache.get_value(&qname_string) {
+            let expire = cached_addrs.expires();
+            let now = std::time::Instant::now();
+            let remaining = expire.saturating_duration_since(now);
+
+            for ip in cached_addrs.value() {
+                reply.answers.push(ResourceRecord::new(
+                    qname.clone(),
+                    CLASS::IN,
+                    remaining.as_secs() as u32,
+                    RData::A(ip.into()),
+                ));
             }
+            continue;
+        }
 
-            if let Ok(addrs) = tokio::net::lookup_host(format!("{}:0", qname_string)).await {
-                let v4_addrs = addrs
-                    .filter_map(|addr| -> Option<Ipv4Addr> {
-                        if let SocketAddr::V4(addr_v4) = addr {
-                            reply.answers.push(ResourceRecord::new(
-                                qname.clone(),
-                                CLASS::IN,
-                                TTL,
-                                RData::A((*addr_v4.ip()).into()),
-                            ));
-                            Some(*addr_v4.ip())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
+        // 没有缓存就问上游
+        if let Ok(addrs) = tokio::net::lookup_host(format!("{}:0", qname_string)).await {
+            let v4_addrs = addrs
+                .filter_map(|addr| -> Option<Ipv4Addr> {
+                    if let SocketAddr::V4(addr_v4) = addr {
+                        reply.answers.push(ResourceRecord::new(
+                            qname.clone(),
+                            CLASS::IN,
+                            TTL,
+                            RData::A((*addr_v4.ip()).into()),
+                        ));
+                        Some(*addr_v4.ip())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
 
-                dns_cache.insert(qname_string, v4_addrs, Duration::from_secs(TTL as u64));
-            }
+            dns_cache.insert(qname_string, v4_addrs, Duration::from_secs(TTL as u64));
         }
     }
     socket.send_to(&reply.build_bytes_vec()?, addr).await?;
