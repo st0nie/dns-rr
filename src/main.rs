@@ -25,7 +25,7 @@ struct Args {
     suffix: String,
 
     /// Ips
-    #[arg(short, long)]
+    #[arg(short, long, value_delimiter = ' ')]
     address: Vec<Ipv4Addr>,
 
     /// listen address
@@ -74,7 +74,7 @@ async fn query_handler(
             continue;
         }
 
-        if qname_string.ends_with(suffix) {
+        if qname_string.ends_with(suffix) && !address.is_empty() {
             should_fallback = false;
             let rr_count = RR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let ip = address[rr_count % address.len()];
