@@ -134,7 +134,7 @@ async fn query_handler(
             Err(e) => {
                 // 11001 Host not found
                 
-                dbg!(e.raw_os_error());
+                dbg!(&e);
                 if e.raw_os_error() == Some(11001) {
                     dns_cache.insert(qname_string, Vec::new(), Duration::from_secs(TTL as u64));
                 }
