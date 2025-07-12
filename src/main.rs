@@ -1,5 +1,6 @@
 use std::{
     net::{Ipv4Addr, SocketAddr},
+    os,
     sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
@@ -130,14 +131,8 @@ async fn query_handler(
 
                 dns_cache.insert(qname_string, v4_addrs, Duration::from_secs(TTL as u64));
             }
-            // 如果上游也无法解析域名，记录缓存
-            Err(e) => {
-                // 11001 Host not found
-                
-                dbg!(&e);
-                if e.raw_os_error() == Some(11001) {
-                    dns_cache.insert(qname_string, Vec::new(), Duration::from_secs(TTL as u64));
-                }
+            Err(_) => {
+                dns_cache.insert(qname_string, Vec::new(), Duration::from_secs(30));
             }
         };
     }
