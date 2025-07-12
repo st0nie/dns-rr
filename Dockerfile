@@ -1,4 +1,4 @@
-FROM rust:bookworm as builder
+FROM rust:bookworm AS builder
 WORKDIR /usr/src/dns-rr
 COPY . .
 RUN cargo install --path .

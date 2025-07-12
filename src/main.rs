@@ -1,6 +1,5 @@
 use std::{
     net::{Ipv4Addr, SocketAddr},
-    os,
     sync::{Arc, atomic::AtomicUsize},
     time::Duration,
 };
