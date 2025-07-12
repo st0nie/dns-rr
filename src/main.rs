@@ -25,7 +25,7 @@ struct Args {
     suffix: String,
 
     /// Ips
-    #[arg(short, long, value_delimiter = ' ')]
+    #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
     address: Vec<Ipv4Addr>,
 
     /// listen address
