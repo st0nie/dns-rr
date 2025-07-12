@@ -133,6 +133,8 @@ async fn query_handler(
             // 如果上游也无法解析域名，记录缓存
             Err(e) => {
                 // 11001 Host not found
+                
+                dbg!(e.raw_os_error());
                 if e.raw_os_error() == Some(11001) {
                     dns_cache.insert(qname_string, Vec::new(), Duration::from_secs(TTL as u64));
                 }
