@@ -131,7 +131,7 @@ async fn query_handler(
                 dns_cache.insert(qname_string, v4_addrs, Duration::from_secs(TTL as u64));
             }
             Err(_) => {
-                dns_cache.insert(qname_string, Vec::new(), Duration::from_secs(30));
+                dns_cache.insert(qname_string, Vec::new(), Duration::from_secs(1));
             }
         };
     }
