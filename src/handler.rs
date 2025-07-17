@@ -72,7 +72,7 @@ async fn generate_reply<'a>(
                 .json(&request_body)
                 .send()
                 .await
-                .inspect_err(|e| error!("Unable to get response for API: {}", e))?
+                .inspect_err(|e| error!("Unable to get response from API: {}", e))?
                 .json::<LoadBalancerInfo>()
                 .await
                 .inspect_err(|e| error!("Unable to parse response: {}", e))?;
