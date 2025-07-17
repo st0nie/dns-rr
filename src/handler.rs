@@ -1,26 +1,42 @@
 use std::{
     net::{Ipv4Addr, SocketAddr},
-    sync::{Arc, atomic::AtomicUsize},
+    sync::Arc,
     time::Duration,
 };
 
 use anyhow::Result;
 use lazy_static::lazy_static;
 use log::{error, info};
+use serde::{Deserialize, Serialize};
 use simple_dns::{CLASS, OPCODE, Packet, PacketFlag, QTYPE, ResourceRecord, TYPE, rdata::RData};
 use timedmap::TimedMap;
 
 use crate::Args;
 
 lazy_static! {
-    static ref RR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    static ref API_CLIENT: reqwest::Client = reqwest::Client::new();
+}
+
+#[derive(Serialize)]
+struct NextNodeRequest {
+    load_balancer_id: String,
+}
+
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)]
+struct LoadBalancerInfo {
+    load_balancer_id: String,
+    ip: Ipv4Addr,
+    port: u16,
+    weight: f64,
 }
 
 async fn generate_reply<'a>(
     packet: &Packet<'a>,
-    address: &Vec<Ipv4Addr>,
-    suffix: &String,
+    suffix: &str,
+    lb_id: &str,
     dns_cache: Arc<TimedMap<String, Vec<Ipv4Addr>>>,
+    api_host: &str,
 ) -> Result<Packet<'a>> {
     let id = packet.id();
     let mut reply = Packet::new_reply(id);
@@ -46,10 +62,23 @@ async fn generate_reply<'a>(
             continue;
         }
 
-        if qname_string.ends_with(suffix) && !address.is_empty() {
+        if qname_string.ends_with(suffix) {
             should_fallback = false;
-            let rr_count = RR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let ip = address[rr_count % address.len()];
+
+            let request_body = NextNodeRequest {
+                load_balancer_id: lb_id.to_string(),
+            };
+
+            let api_response = API_CLIENT
+                .post(api_host)
+                .json(&request_body)
+                .send()
+                .await?
+                .json::<LoadBalancerInfo>()
+                .await?;
+
+            let ip = api_response.ip;
+
             reply.answers.push(ResourceRecord::new(
                 qname.clone(),
                 CLASS::IN,
@@ -124,9 +153,15 @@ pub async fn query_handler(
     let packet =
         Packet::parse(request).inspect_err(|e| error!("Failed to parse DNS packet: {e}"))?;
 
-    let reply = generate_reply(&packet, &args.address, &args.suffix, dns_cache)
-        .await
-        .unwrap_or(Packet::new_reply(packet.id()));
+    let reply = generate_reply(
+        &packet,
+        &args.suffix,
+        &args.balancer,
+        dns_cache,
+        &args.api,
+    )
+    .await
+    .unwrap_or(Packet::new_reply(packet.id()));
 
     socket.send_to(&reply.build_bytes_vec()?, addr).await?;
 

@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 
 use clap::Parser;
 
@@ -9,9 +9,13 @@ pub struct Args {
     #[arg(short, long)]
     pub suffix: String,
 
-    /// Ips
-    #[arg(short, long, value_parser, num_args = 1.., value_delimiter = ' ')]
-    pub address: Vec<Ipv4Addr>,
+    /// Http API Host
+    #[arg(short, long)]
+    pub api: String,
+
+    /// LoadBalancer ID
+    #[arg(short, long)]
+    pub balancer: String,
 
     /// listen address
     #[arg(short, long, default_value = "0.0.0.0:53")]
