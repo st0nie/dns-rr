@@ -5,17 +5,15 @@ use std::{
 };
 
 use anyhow::Result;
-use lazy_static::lazy_static;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use simple_dns::{CLASS, OPCODE, Packet, PacketFlag, QTYPE, ResourceRecord, TYPE, rdata::RData};
+use std::sync::LazyLock;
 use timedmap::TimedMap;
 
 use crate::Args;
 
-lazy_static! {
-    static ref API_CLIENT: reqwest::Client = reqwest::Client::new();
-}
+static API_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
 #[derive(Serialize)]
 struct NextNodeRequest {
@@ -153,15 +151,9 @@ pub async fn query_handler(
     let packet =
         Packet::parse(request).inspect_err(|e| error!("Failed to parse DNS packet: {e}"))?;
 
-    let reply = generate_reply(
-        &packet,
-        &args.suffix,
-        &args.balancer,
-        dns_cache,
-        &args.api,
-    )
-    .await
-    .unwrap_or(Packet::new_reply(packet.id()));
+    let reply = generate_reply(&packet, &args.suffix, &args.balancer, dns_cache, &args.api)
+        .await
+        .unwrap_or(Packet::new_reply(packet.id()));
 
     socket.send_to(&reply.build_bytes_vec()?, addr).await?;
 
