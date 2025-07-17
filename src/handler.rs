@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
-use log::{error, info};
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use simple_dns::{CLASS, OPCODE, Packet, PacketFlag, QTYPE, ResourceRecord, TYPE, rdata::RData};
 use std::sync::LazyLock;
@@ -71,9 +71,11 @@ async fn generate_reply<'a>(
                 .post(api_host)
                 .json(&request_body)
                 .send()
-                .await?
+                .await
+                .inspect_err(|e| error!("Unable to get response for API: {}", e))?
                 .json::<LoadBalancerInfo>()
-                .await?;
+                .await
+                .inspect_err(|e| error!("Unable to parse response: {}", e))?;
 
             let ip = api_response.ip;
 
@@ -93,6 +95,7 @@ async fn generate_reply<'a>(
 
         // 有缓存就用缓存
         if let Some(cached_addrs) = dns_cache.get_value(&qname_string) {
+            info!("Cache hit for {}", qname_string);
             let expire = cached_addrs.expires();
             let now = std::time::Instant::now();
             let remaining = expire.saturating_duration_since(now);
@@ -108,6 +111,7 @@ async fn generate_reply<'a>(
             continue;
         }
 
+        info!("Fallback to upstream for {}", qname_string);
         // 没有缓存就问上游
         match tokio::net::lookup_host(format!("{qname_string}:0")).await {
             Ok(addrs) => {
@@ -130,6 +134,7 @@ async fn generate_reply<'a>(
                 dns_cache.insert(qname_string, v4_addrs, Duration::from_secs(TTL as u64));
             }
             Err(_) => {
+                warn!("No upstream DNS found for {}", qname_string);
                 dns_cache.insert(qname_string, Vec::new(), Duration::from_secs(1));
             }
         };
@@ -146,15 +151,17 @@ pub async fn query_handler(
     args: Arc<Args>,
     dns_cache: Arc<TimedMap<String, Vec<Ipv4Addr>>>,
 ) -> Result<()> {
-    info!("Received {size} bytes");
+    info!("Received query from {}", addr);
     let request = &buf[..size];
     let packet =
         Packet::parse(request).inspect_err(|e| error!("Failed to parse DNS packet: {e}"))?;
 
     let reply = generate_reply(&packet, &args.suffix, &args.balancer, dns_cache, &args.api)
         .await
+        .inspect_err(|e| warn!("Failed to generate reply, use empty reply: {e}"))
         .unwrap_or(Packet::new_reply(packet.id()));
 
+    info!("Sending reply to {}", addr);
     socket.send_to(&reply.build_bytes_vec()?, addr).await?;
 
     Ok(())
