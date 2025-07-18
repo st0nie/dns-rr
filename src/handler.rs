@@ -6,28 +6,15 @@ use std::{
 
 use anyhow::Result;
 use log::{error, info, warn};
-use serde::{Deserialize, Serialize};
 use simple_dns::{CLASS, OPCODE, Packet, PacketFlag, QTYPE, ResourceRecord, TYPE, rdata::RData};
 use std::sync::LazyLock;
 use timedmap::TimedMap;
 
 use crate::Args;
+mod requests;
+use requests::{LoadBalancerInfo, NextNodeRequest};
 
 static API_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
-
-#[derive(Serialize)]
-struct NextNodeRequest {
-    load_balancer_id: String,
-}
-
-#[derive(Deserialize, Debug)]
-#[allow(dead_code)]
-struct LoadBalancerInfo {
-    load_balancer_id: String,
-    ip: Ipv4Addr,
-    port: u16,
-    weight: f64,
-}
 
 async fn generate_reply<'a>(
     packet: &Packet<'a>,
@@ -63,19 +50,17 @@ async fn generate_reply<'a>(
         if qname_string.ends_with(suffix) {
             should_fallback = false;
 
-            let request_body = NextNodeRequest {
-                load_balancer_id: lb_id.to_string(),
-            };
+            let request_body = NextNodeRequest::new(lb_id);
 
             let api_response = API_CLIENT
                 .post(api_host)
                 .json(&request_body)
                 .send()
                 .await
-                .inspect_err(|e| error!("Unable to get response from API: {}", e))?
+                .inspect_err(|e| error!("Unable to get response from API: {e}"))?
                 .json::<LoadBalancerInfo>()
                 .await
-                .inspect_err(|e| error!("Unable to parse response: {}", e))?;
+                .inspect_err(|e| error!("Unable to parse response: {e}"))?;
 
             let ip = api_response.ip;
 
@@ -95,7 +80,7 @@ async fn generate_reply<'a>(
 
         // 有缓存就用缓存
         if let Some(cached_addrs) = dns_cache.get_value(&qname_string) {
-            info!("Cache hit for {}", qname_string);
+            info!("Cache hit for {qname_string}");
             let expire = cached_addrs.expires();
             let now = std::time::Instant::now();
             let remaining = expire.saturating_duration_since(now);
@@ -111,7 +96,7 @@ async fn generate_reply<'a>(
             continue;
         }
 
-        info!("Fallback to upstream for {}", qname_string);
+        info!("Fallback to upstream for {qname_string}");
         // 没有缓存就问上游
         match tokio::net::lookup_host(format!("{qname_string}:0")).await {
             Ok(addrs) => {
@@ -134,7 +119,7 @@ async fn generate_reply<'a>(
                 dns_cache.insert(qname_string, v4_addrs, Duration::from_secs(TTL as u64));
             }
             Err(_) => {
-                warn!("No upstream DNS found for {}", qname_string);
+                warn!("No upstream DNS found for {qname_string}");
                 dns_cache.insert(qname_string, Vec::new(), Duration::from_secs(1));
             }
         };
@@ -151,7 +136,7 @@ pub async fn query_handler(
     args: Arc<Args>,
     dns_cache: Arc<TimedMap<String, Vec<Ipv4Addr>>>,
 ) -> Result<()> {
-    info!("Received query from {}", addr);
+    info!("Received query from {addr}");
     let request = &buf[..size];
     let packet =
         Packet::parse(request).inspect_err(|e| error!("Failed to parse DNS packet: {e}"))?;
@@ -161,7 +146,7 @@ pub async fn query_handler(
         .inspect_err(|e| warn!("Failed to generate reply, use empty reply: {e}"))
         .unwrap_or(Packet::new_reply(packet.id()));
 
-    info!("Sending reply to {}", addr);
+    info!("Sending reply to {addr}");
     socket.send_to(&reply.build_bytes_vec()?, addr).await?;
 
     Ok(())

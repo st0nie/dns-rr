@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::Parser as _;
-use log::info;
 use std::{sync::Arc, time::Duration};
 use timedmap::{TimedMap, start_cleaner};
 use tokio::signal;
