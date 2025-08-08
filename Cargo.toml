@@ -5,10 +5,10 @@ edition = "2024"
 
 [profile.release]
 opt-level = 3
-debug = false
+debug = 2
 debug-assertions = false
 overflow-checks = false
-strip = true
+strip = "none"
 lto = true
 codegen-units = 1
 panic = 'abort'
